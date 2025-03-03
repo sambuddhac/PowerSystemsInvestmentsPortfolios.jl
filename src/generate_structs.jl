@@ -226,12 +226,71 @@ function db_to_dataframes(db_path::String)
         query = "SELECT * FROM $table_name"
         df = DataFrame(DBInterface.execute(db, query))
         dfs[table_name] = df
+        CSV.write("./csv_results/$(table_name).csv", df)
     end
+
+    thermal_df, vre_df, hydro_df = split_dataframe_by_fuel_type(dfs["generation_units"], dfs["operational_data"])
+
+    CSV.write("./csv_results/Thermal.csv", thermal_df)
+    CSV.write("./csv_results/VRE.csv", vre_df)
+    CSV.write("./csv_results/Hydro.csv", hydro_df)
 
     # Close the database connection
     SQLite.close(db)
 
     return dfs
+end
+
+function split_dataframe_by_fuel_type(df::DataFrame, op_df::DataFrame)
+    # Filter for Thermal
+    thermal_fuels = ["Oil", "Coal", "NG", "Nuclear"]
+    thermal_df = filter(row -> row.fuel_type in thermal_fuels, df)
+
+    # Filter for VRE (Variable Renewable Energy)
+    vre_fuels = ["Solar", "Wind"]
+    vre_df = filter(row -> row.fuel_type in vre_fuels, df)
+
+    # Filter for Hydro
+    hydro_df = filter(row -> row.fuel_type == "Hydro", df)
+
+    thermal_df, vre_df, hydro_df = add_operational_data(thermal_df, vre_df, hydro_df, op_df)
+
+    return thermal_df, vre_df, hydro_df
+end
+
+function add_operational_data(thermal_df::DataFrame, vre_df::DataFrame, hydro_df::DataFrame, operational_data::DataFrame)
+    function add_columns(df::DataFrame, operational_data::DataFrame)
+        new_df = copy(df) # Create a copy to avoid modifying the original
+
+        # Initialize new columns with missing values
+        new_df.fom_cost = Vector{Union{Float64, Missing}}(missing, nrow(new_df))
+        new_df.vom_cost = Vector{Union{Float64, Missing}}(missing, nrow(new_df))
+        new_df.startup_cost = Vector{Union{Float64, Missing}}(missing, nrow(new_df))
+        new_df.startup_fuel_mmbtu_per_mw = Vector{Union{Float64, Missing}}(missing, nrow(new_df))
+        new_df.uptime = Vector{Union{Float64, Missing}}(missing, nrow(new_df))
+        new_df.downtime = Vector{Union{Float64, Missing}}(missing, nrow(new_df))
+
+        for (i, row) in enumerate(eachrow(new_df))
+            unit_id = row.unit_id
+            operational_row = findfirst(operational_data.unit_id .== unit_id)
+
+            if operational_row !== nothing
+                new_df.fom_cost[i] = operational_data.fom_cost[operational_row]
+                new_df.vom_cost[i] = operational_data.vom_cost[operational_row]
+                new_df.startup_cost[i] = operational_data.startup_cost[operational_row]
+                new_df.startup_fuel_mmbtu_per_mw[i] = operational_data.startup_fuel_mmbtu_per_mw[operational_row]
+                new_df.uptime[i] = operational_data.uptime[operational_row]
+                new_df.downtime[i] = operational_data.downtime[operational_row]
+            end
+        end
+        return new_df
+    end
+
+    thermal_df_updated = add_columns(thermal_df, operational_data)
+    vre_df_updated = add_columns(vre_df, operational_data)
+    hydro_df_updated = add_columns(hydro_df, operational_data)
+
+    return thermal_df_updated, vre_df_updated, hydro_df_updated
 end
 
 # TODO: Figure out more permanent solution for mapping prime movers

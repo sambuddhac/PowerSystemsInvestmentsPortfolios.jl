@@ -40,6 +40,7 @@ using PowerSystems
 using Dates
 using TimeSeries
 using StringEncodings
+using CSV
 
 export Portfolio
 export Technology
