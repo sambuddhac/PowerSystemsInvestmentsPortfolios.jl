@@ -226,14 +226,47 @@ function db_to_dataframes(db_path::String)
         query = "SELECT * FROM $table_name"
         df = DataFrame(DBInterface.execute(db, query))
         dfs[table_name] = df
-        CSV.write("./csv_results/$(table_name).csv", df)
+        outpath = "./csv_results"
+        if !(isdir(outpath))
+            mkdir(outpath)
+        end
+        CSV.write(joinpath(outpath,"$(table_name).csv"), df)
     end
 
+    number_of_zones=length(dfs["areas"].name) # Number of zones in the database
+    #genx_case_vector = [] # Vector to store the paths for each zone for GenX cases
     thermal_df, vre_df, hydro_df = split_dataframe_by_fuel_type(dfs["generation_units"], dfs["operational_data"])
+    thermal_array, vre_array, hydro_array, trans_array = split_all_dataframes_by_topology(thermal_df, vre_df, hydro_df, dfs["transmission_lines"], number_of_zones)
 
-    CSV.write("./csv_results/Thermal.csv", thermal_df)
-    CSV.write("./csv_results/VRE.csv", vre_df)
-    CSV.write("./csv_results/Hydro.csv", hydro_df)
+    for zone_count in 1:number_of_zones
+        genx_case_zone = "GenX_case_zone_$zone_count"
+        outpath = joinpath("./csv_results", genx_case_zone)
+        if !(isdir(outpath))
+            mkdir(outpath)
+        end
+        outpath_system = joinpath(outpath, "system")
+        outpath_technologies = joinpath(outpath, "resources")
+        outpath_settings = joinpath(outpath, "settings")
+        outpath_policies = joinpath(outpath, "policies")
+        if !(isdir(outpath_system))
+            mkdir(outpath_system)
+        end
+        if !(isdir(outpath_technologies))
+            mkdir(outpath_technologies)
+        end
+        if !(isdir(outpath_settings))
+            mkdir(outpath_settings)
+        end
+        if !(isdir(outpath_policies))
+            mkdir(outpath_policies)
+        end
+        
+        CSV.write(joinpath(outpath_technologies, "Thermal.csv"), thermal_array[zone_count])
+        CSV.write(joinpath(outpath_technologies, "Vre.csv"), vre_array[zone_count])
+        CSV.write(joinpath(outpath_technologies, "Hydro.csv"), hydro_array[zone_count])
+        CSV.write(joinpath(outpath_system, "Network.csv"), trans_array[zone_count])
+        #push!(genx_case_vector, outpath)
+    end
 
     # Close the database connection
     SQLite.close(db)
@@ -290,7 +323,36 @@ function add_operational_data(thermal_df::DataFrame, vre_df::DataFrame, hydro_df
     vre_df_updated = add_columns(vre_df, operational_data)
     hydro_df_updated = add_columns(hydro_df, operational_data)
 
+
+
     return thermal_df_updated, vre_df_updated, hydro_df_updated
+end
+
+function split_dataframes_by_topology(df::DataFrame, count::Int64)
+    df_arr = []
+    for i in 1:count
+        df_i = filter(row -> startswith(string(row.balancing_topology), string(i)), df)
+        push!(df_arr, df_i)
+    end
+    return df_arr
+end
+
+function split_transmission_lines_by_topology(df::DataFrame, count::Int64)
+    df_arr = []
+    for i in 1:count
+        df_i = filter(row -> startswith(string(row.balancing_topology_from), string(i)) && startswith(string(row.balancing_topology_to), string(i)), df)
+        push!(df_arr, df_i)
+    end
+    return df_arr
+end
+
+function split_all_dataframes_by_topology(thermal::DataFrame, vre::DataFrame, hydro::DataFrame, transmission::DataFrame, count::Int64)
+    thermal_arr = split_dataframes_by_topology(thermal, count)
+    vre_arr = split_dataframes_by_topology(vre, count)
+    hydro_arr = split_dataframes_by_topology(hydro, count)
+    trans_arr = split_transmission_lines_by_topology(transmission, count)
+
+    return thermal_arr, vre_arr, hydro_arr, trans_arr
 end
 
 # TODO: Figure out more permanent solution for mapping prime movers
